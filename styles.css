@@ -96,3 +96,38 @@ fieldset { border:1px solid var(--line); border-radius:8px; margin:0 0 10px; } .
   td { display:flex; gap:10px; border:0; padding:2px 12px; } td[data-l]::before { content:attr(data-l); color:var(--muted); min-width:96px; font-size:.85rem; }
   .preview tr { display:table-row; } .preview td { display:table-cell; }
 }
+
+/* หน้าผังโต๊ะ: ทุกอย่างอยู่ในหนึ่งหน้าจอ */
+body.fit { display:flex; flex-direction:column; height:100vh; height:100dvh; overflow:hidden; }
+body.fit #banner { display:none; }
+body.fit header { padding:6px 12px; }
+body.fit .summary { padding:3px 12px 7px; font-size:.9rem; }
+body.fit .summary b { font-size:1rem; }
+body.fit .tabs a { padding:4px 14px; }
+body.fit main { flex:1; min-height:0; width:100%; max-width:none; margin:0; padding:6px 10px 8px; display:flex; flex-direction:column; }
+body.fit main > div, body.fit #map, body.fit .editor > div { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
+body.fit .legend { margin:0 0 4px; font-size:.8rem; }
+body.fit .zoom { margin-bottom:4px; } body.fit .zoom button { padding:1px 12px; }
+body.fit .floor-scroll { flex:1; min-height:0; max-height:none; position:relative; }
+body.fit .floor { position:absolute; top:0; left:0; width:100%; height:100%; margin:0; }
+body.fit .orphans { max-height:3.2em; overflow:auto; margin:0; }
+body.fit .orphans p { margin:4px 0 0; } body.fit .orphans .note { padding:0; }
+body.fit .toolbar { flex-wrap:nowrap; overflow-x:auto; flex:none; margin-bottom:6px; padding:2px; } body.fit .toolbar button { white-space:nowrap; padding:4px 12px; }
+body.fit .editor { flex:1; min-height:0; grid-template-rows:minmax(0,1fr); align-items:stretch; }
+body.fit aside { overflow:auto; min-height:0; }
+body.fit .editor .muted { margin:4px 0 0; }
+@media (max-width:900px) {
+  body.fit .editor { grid-template-rows:minmax(0,1fr) auto; gap:6px; }
+  body.fit aside { max-height:28vh; padding:10px; }
+  body.fit .editor > div > .muted { display:none; }
+}
+@media (max-height:520px) {
+  body.fit .summary, body.fit .legend { display:none; }
+  body.fit header { padding:3px 12px; }
+  body.fit .editor { grid-template-columns:minmax(0,1fr) 230px; grid-template-rows:minmax(0,1fr); }
+  body.fit aside { max-height:none; }
+}
+@media (max-width:900px) and (max-height:620px) and (min-height:521px) {
+  body.fit aside { max-height:18vh; }
+  body.fit .legend { display:none; }
+}
