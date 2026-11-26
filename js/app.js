@@ -405,8 +405,6 @@ function build() {
   const ok = allowed.includes(page);
   $('#tabs').innerHTML = ok ? Object.entries(PAGES[page].tabs).map(([k, v]) => `<a href="#${page}/${k}" class="${k === tab ? 'on' : ''}">${v}</a>`).join('') : '';
   $('#summary').hidden = !ok;
-  // หน้าผังโต๊ะ: จัดให้พอดีหนึ่งหน้าจอ ไม่ต้องเลื่อน
-  document.body.classList.toggle('fit', ok && (tab === 'map' || tab === 'layout'));
   main.innerHTML = '';
   if (!authReady) main.innerHTML = '<p class="note">กำลังเชื่อมต่อ…</p>';
   else if (!user) loginForm(main);
