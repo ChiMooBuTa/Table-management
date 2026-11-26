@@ -34,6 +34,7 @@ function tableStats() {
   }
   return stats;
 }
+const tableDesc = name => tables().find(([, i]) => i.name === name)?.[1].desc || '';
 const tableNames = () => [...new Set([...tables().map(([, i]) => i.name), ...Object.values(db.guests).map(g => g.table)])].filter(Boolean).sort(byTable);
 
 function save(patch, message) {
@@ -49,14 +50,40 @@ function toast(text, bad) {
   t.textContent = text; t.className = 'show' + (bad ? ' bad' : '');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), bad ? 6000 : 2500);
 }
-const dialog = $('#dialog');
-let dialogRender = null;
-function openDialog(render) {
-  dialogRender = render; dialog.innerHTML = render();
-  if (!dialog.open) dialog.showModal();
+// หน้าต่างซ้อนวาดในหน้าเว็บเอง (ไม่ใช้ป๊อปอัปของเบราว์เซอร์ ซึ่งบางเบราว์เซอร์บนมือถือไม่แสดง)
+function overlay(id) {
+  $('#' + id)?.remove();
+  const el = document.createElement('div');
+  el.id = id; el.className = 'modal'; el.hidden = true;
+  el.innerHTML = '<div class="box" role="dialog" aria-modal="true" tabindex="-1"></div>';
+  document.body.append(el);
+  return el;
 }
-const closeDialog = () => { dialogRender = null; dialog.close(); };
-dialog.addEventListener('close', () => { dialogRender = null; });
+const dialog = overlay('dialog'), dialogBox = dialog.firstChild;
+const confirmLayer = overlay('confirm'), confirmBox = confirmLayer.firstChild;
+let dialogRender = null;
+let answer = null;
+function ask(message, yes = 'ตกลง', no = 'ยกเลิก') {
+  answer?.(false);
+  confirmBox.innerHTML = `<p class="question">${esc(message)}</p><div class="row end"><button data-no>${esc(no)}</button><button class="primary" data-yes>${esc(yes)}</button></div>`;
+  confirmLayer.hidden = false; confirmBox.focus();
+  return new Promise(resolve => {
+    answer = value => { answer = null; confirmLayer.hidden = true; resolve(value); };
+  });
+}
+confirmLayer.addEventListener('click', e => {
+  if (e.target.closest('[data-yes]')) answer?.(true);
+  else if (e.target === confirmLayer || e.target.closest('[data-no]')) answer?.(false);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (answer) answer(false); else if (!dialog.hidden) closeDialog();
+});
+function openDialog(render) {
+  dialogRender = render; dialogBox.innerHTML = render();
+  dialog.hidden = false; dialogBox.focus();
+}
+const closeDialog = () => { dialogRender = null; dialog.hidden = true; dialogBox.innerHTML = ''; };
 dialog.addEventListener('click', e => { if (e.target === dialog || e.target.closest('[data-close]')) closeDialog(); });
 
 const canCheck = () => page !== 'viewer';
@@ -64,7 +91,7 @@ const badge = g => `<span class="badge ${g.checked ? 'yes' : ''}">${g.checked ? 
 const timeText = t => (t ? new Date(t).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.' : '');
 const tableOptions = current => `<option value="">— ไม่ระบุ —</option>` + tableNames().map(n => {
   const s = tableStats().get(n), seat = tables().find(([, i]) => i.name === n)?.[1].seats;
-  return `<option value="${esc(n)}" ${n === current ? 'selected' : ''}>${esc(n)} (${s?.total || 0}${seat ? '/' + seat : ''} คน)</option>`;
+  return `<option value="${esc(n)}" ${n === current ? 'selected' : ''}>${esc(n)}${tableDesc(n) ? ' · ' + esc(tableDesc(n)) : ''} (${s?.total || 0}${seat ? '/' + seat : ''} คน)</option>`;
 }).join('');
 
 function guestCard(g) {
@@ -72,7 +99,7 @@ function guestCard(g) {
     <div class="who"><h3>${esc(g.th || g.en)}</h3>${g.th && g.en ? `<p class="en">${esc(g.en)}</p>` : ''}
       <dl><div><dt>ตำแหน่ง</dt><dd>${esc(g.pos || '-')}</dd></div><div><dt>ความสัมพันธ์</dt><dd>${esc(g.rel || '-')}</dd></div></dl>
       ${badge(g)} <small>${g.checked ? timeText(g.checkedAt) : ''}</small></div>
-    <div class="seat"><span>โต๊ะ</span><b>${esc(g.table || '-')}</b></div>
+    <div class="seat"><span>โต๊ะ</span><b>${esc(g.table || '-')}</b>${tableDesc(g.table) ? `<small>${esc(tableDesc(g.table))}</small>` : ''}</div>
     ${canCheck() ? `<div class="actions">
       <button class="${g.checked ? 'ghost' : 'primary big'}" data-act="${g.checked ? 'uncheck' : 'check'}" data-id="${esc(g.id)}">${g.checked ? 'ยกเลิกเช็คอิน' : 'เช็คอิน'}</button>
       <label>แก้ไขโต๊ะ <select data-table="${esc(g.id)}">${tableOptions(g.table)}</select></label></div>` : ''}
@@ -82,16 +109,15 @@ function guestCard(g) {
 function setChecked(id, value) {
   const g = db.guests[id];
   if (!g || !canCheck()) return;
-  if (!value && !confirm(`ยกเลิกเช็คอินของ ${g.th || g.en} ?`)) return;
   save({ [`guests/${id}/checked`]: value, [`guests/${id}/checkedAt`]: value ? Date.now() : null }, value ? `เช็คอิน ${g.th || g.en} แล้ว • โต๊ะ ${g.table || '-'}` : 'ยกเลิกเช็คอินแล้ว');
 }
-function setTable(id, name, select) {
+async function setTable(id, name, select) {
   const g = db.guests[id];
   if (!g || !canCheck()) return;
   const seats = tables().find(([, i]) => i.name === name)?.[1].seats;
   const total = tableStats().get(name)?.total || 0;
-  if (seats && total >= seats && !confirm(`โต๊ะ ${name} มีแขกครบ ${seats} ที่นั่งแล้ว ต้องการย้ายเข้าโต๊ะนี้หรือไม่?`)) { select.value = g.table; return; }
   select.blur();
+  if (seats && total >= seats && !await ask(`โต๊ะ ${name} มีแขกครบ ${seats} ที่นั่งแล้ว ต้องการย้ายเข้าโต๊ะนี้หรือไม่?`, 'ย้าย')) { select.value = g.table; return; }
   save({ [`guests/${id}/table`]: name }, `ย้าย ${g.th || g.en} ไปโต๊ะ ${name || '(ไม่ระบุ)'}`);
 }
 document.addEventListener('click', e => {
@@ -165,7 +191,7 @@ function editGuest(id) {
     closeDialog();
   };
   const del = $('#del');
-  if (del) del.onclick = () => { if (confirm('ลบแขกคนนี้?')) { save({ [`guests/${id}`]: null }, 'ลบแล้ว'); closeDialog(); } };
+  if (del) del.onclick = async () => { if (await ask(`ลบแขก ${g.th || g.en}?`, 'ลบ')) { save({ [`guests/${id}`]: null }, 'ลบแล้ว'); closeDialog(); } };
 }
 
 /* ---------- ผังโต๊ะ (ดูอย่างเดียว) ---------- */
@@ -175,6 +201,7 @@ function showTable(name) {
     const seats = tables().find(([, i]) => i.name === name)?.[1].seats || 0;
     const checked = members.filter(g => g.checked).length, free = Math.max(0, seats - members.length);
     return `<div class="dhead"><h2>โต๊ะ ${esc(name)}</h2><button data-close>ปิด</button></div>
+      ${tableDesc(name) ? `<p class="tabledesc">${esc(tableDesc(name))}</p>` : ''}
       <p class="legend"><span class="k in">เช็คอินแล้ว ${checked}</span><span class="k wait">ยังไม่เช็คอิน ${members.length - checked}</span>${seats ? `<span class="k free">ว่าง ${free}</span>` : ''}</p>
       <ul class="members">${members.map(g => `<li><i class="seatdot ${g.checked ? 'in' : 'wait'}"></i><div><b>${esc(g.th || g.en)}</b><small>${esc([g.th && g.en, g.pos, g.rel].filter(Boolean).join(' • '))}</small></div>${badge(g)}</li>`).join('') || '<li>ยังไม่มีแขกในโต๊ะนี้</li>'}${'<li class="vacant"><i class="seatdot free"></i><div>ที่นั่งว่าง</div></li>'.repeat(Math.min(free, 60))}</ul>`;
   });
@@ -227,24 +254,24 @@ function layoutView(el) {
     shown = id;
     const i = db.items[id];
     const input = (k, label, v, type = 'number') => `<label>${label}<input data-prop="${k}" type="${type}" value="${esc(v)}" ${type === 'number' ? 'step="5"' : 'maxlength="80"'}></label>`;
-    props.innerHTML = i ? `<h2>${TYPES[i.type].label}</h2>${input('name', i.type === 'table' ? 'ชื่อ / เบอร์โต๊ะ' : 'ข้อความ', i.name, 'text')}
+    props.innerHTML = i ? `<h2>${TYPES[i.type].label}</h2>${input('name', i.type === 'table' ? 'หมายเลขโต๊ะ' : 'ข้อความ', i.name, 'text')}${i.type === 'table' ? input('desc', 'คำอธิบาย (กลุ่มแขก)', i.desc, 'text') : ''}
       <div class="grid2">${input('x', 'ตำแหน่ง X', i.x)}${input('y', 'ตำแหน่ง Y', i.y)}${input('w', 'กว้าง', i.w)}${input('h', 'สูง', i.h)}${input('rot', 'หมุน (องศา)', i.rot)}${i.type === 'table' ? input('seats', 'จำนวนที่นั่ง', i.seats) : ''}</div>
       ${i.type === 'table' ? `<label>รูปทรง<select data-prop="shape"><option value="round">กลม</option><option value="rect" ${i.shape === 'rect' ? 'selected' : ''}>เหลี่ยม</option></select></label>` : ''}
       <div class="row"><button data-do="rotate">หมุน 90°</button><button data-do="copy">คัดลอก</button><button data-do="delete" class="danger">ลบ</button></div>`
       : `<h2>ขนาดห้อง</h2><div class="grid2">${input('room.w', 'กว้าง', db.room.w)}${input('room.h', 'ยาว', db.room.h)}</div><p class="muted">แตะวัตถุในผังเพื่อแก้ไขรายละเอียด</p>`;
   }
-  props.onchange = e => {
+  props.onchange = async e => {
     const k = e.target.dataset.prop, id = floor.selected;
     if (!k) return;
     if (k.startsWith('room.')) { save({ 'layout/room': normalizeRoom({ ...db.room, [k.slice(5)]: e.target.value }) }); e.target.blur(); return drawProps(); }
     const i = db.items[id];
     if (!i) return;
-    const next = normalizeItem({ ...i, [k]: e.target.value === '' && k !== 'name' ? i[k] : e.target.value });
+    const next = normalizeItem({ ...i, [k]: e.target.value === '' && k !== 'name' && k !== 'desc' ? i[k] : e.target.value });
     const patch = { [`layout/items/${id}/${k}`]: next[k] };
     if (k === 'name' && i.type === 'table' && next.name !== i.name) {
       if (!next.name || tables().some(([other, t]) => other !== id && t.name === next.name)) { toast('เบอร์โต๊ะว่างหรือซ้ำกับโต๊ะอื่น', true); e.target.value = i.name; return; }
       const members = Object.entries(db.guests).filter(([, g]) => g.table === i.name);
-      if (members.length && !tableStats().has(next.name) && confirm(`ย้ายแขก ${members.length} คนจากโต๊ะ ${i.name} ไปใช้ชื่อโต๊ะ ${next.name} ด้วยหรือไม่?`))
+      if (members.length && !tableStats().has(next.name) && await ask(`ย้ายแขก ${members.length} คนจากโต๊ะ ${i.name} ไปใช้ชื่อโต๊ะ ${next.name} ด้วยหรือไม่?`, 'ย้ายแขกด้วย', 'ไม่ย้าย'))
         for (const [gid] of members) patch[`guests/${gid}/table`] = next.name;
     }
     save(patch);
@@ -255,9 +282,9 @@ function layoutView(el) {
     if (copy.type === 'table') copy.name = nextTableName(db.items);
     return { ...copy, ...freeSpot(db.items, copy) };
   }
-  const remove = id => {
+  const remove = async id => {
     const i = db.items[id];
-    if (i && confirm(`ลบ${TYPES[i.type].label} ${i.name}?`)) { save({ [`layout/items/${id}`]: null }); floor.select(null); drawProps(null); }
+    if (i && await ask(`ลบ${TYPES[i.type].label} ${i.name}?`, 'ลบ')) { save({ [`layout/items/${id}`]: null }); floor.select(null); drawProps(null); }
   };
   props.onclick = e => {
     const action = e.target.dataset.do, id = floor.selected, i = db.items[id];
@@ -293,7 +320,7 @@ function layoutView(el) {
   };
   const keys = e => {
     const id = floor.selected, i = db.items[id];
-    if (!i || dialog.open || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if (!i || !dialog.hidden || answer || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
     const d = { ArrowLeft: ['x', -5], ArrowRight: ['x', 5], ArrowUp: ['y', -5], ArrowDown: ['y', 5] }[e.key];
     if (d) { e.preventDefault(); save({ [`layout/items/${id}/${d[0]}`]: i[d[0]] + d[1] }); drawProps(); }
     if (e.key === 'Delete') remove(id);
@@ -335,9 +362,9 @@ function dataView(el) {
     try { confirmImport(await parseFile(file), file.name); }
     catch (err) { toast(err.message, true); }
   };
-  el.onclick = e => {
+  el.onclick = async e => {
     const what = e.target.dataset.clear;
-    if (!what || !confirm(`ยืนยัน: ${e.target.textContent}? ทุกเครื่องจะเห็นการเปลี่ยนแปลงนี้`)) return;
+    if (!what || !await ask(`ยืนยัน: ${e.target.textContent}? ทุกเครื่องจะเห็นการเปลี่ยนแปลงนี้`, 'ยืนยัน')) return;
     exportJson('backup');
     if (what === 'checks') {
       const patch = {};
@@ -392,7 +419,8 @@ function route() {
   page = Object.hasOwn(PAGES, p) ? p : fallback;
   tab = Object.hasOwn(PAGES[page].tabs, t) ? t : lastTab[page] || Object.keys(PAGES[page].tabs)[0];
   lastTab[page] = tab;
-  if (dialog.open) closeDialog();
+  answer?.(false);
+  if (!dialog.hidden) closeDialog();
   build();
 }
 
@@ -405,6 +433,8 @@ function build() {
   const ok = allowed.includes(page);
   $('#tabs').innerHTML = ok ? Object.entries(PAGES[page].tabs).map(([k, v]) => `<a href="#${page}/${k}" class="${k === tab ? 'on' : ''}">${v}</a>`).join('') : '';
   $('#summary').hidden = !ok;
+  // หน้าผังโต๊ะ: จัดให้พอดีหนึ่งหน้าจอ ไม่ต้องเลื่อน
+  document.body.classList.toggle('fit', ok && (tab === 'map' || tab === 'layout'));
   main.innerHTML = '';
   if (!authReady) main.innerHTML = '<p class="note">กำลังเชื่อมต่อ…</p>';
   else if (!user) loginForm(main);
@@ -424,7 +454,7 @@ function refresh() {
   if (document.activeElement?.dataset?.table !== undefined) {
     document.activeElement.addEventListener('blur', () => setTimeout(() => view?.update()), { once: true });
   } else view?.update();
-  if (dialog.open && dialogRender) dialog.innerHTML = dialogRender();
+  if (!dialog.hidden && dialogRender) dialogBox.innerHTML = dialogRender();
 }
 
 function loginForm(main) {
@@ -445,7 +475,7 @@ store.init({
   onData,
   onAuth(next) {
     const same = authReady && user?.uid === next?.uid && user?.role === next?.role;
-    if (user && user.uid !== next?.uid) { query = ''; filters.text = filters.status = ''; $('#toast').textContent = ''; $('#toast').className = ''; dialog.innerHTML = ''; }
+    if (user && user.uid !== next?.uid) { query = ''; filters.text = filters.status = ''; $('#toast').textContent = ''; $('#toast').className = ''; answer?.(false); closeDialog(); }
     user = next; authReady = true;
     if (!same) route();
   },
