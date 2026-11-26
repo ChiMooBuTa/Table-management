@@ -5,6 +5,56 @@ const ORDER = { aisle: 0, stage: 1, door: 2, table: 3, label: 4 };
 const SNAP = 5;
 const snap = v => Math.round(v / SNAP) * SNAP;
 
+const ruler = document.createElement('canvas').getContext('2d');
+const textWidth = (s, size) => { ruler.font = `${size}px Sarabun, "Noto Sans Thai", sans-serif`; return ruler.measureText(s).width; };
+const pieces = (s, granularity) => (Intl.Segmenter ? Array.from(new Intl.Segmenter('th', { granularity }).segment(s), x => x.segment) : granularity === 'word' ? s.split(/(\s+)/) : Array.from(s));
+
+/** ตัดคำอธิบายโต๊ะเป็นไม่เกิน 2 บรรทัด โดยลดขนาดตัวอักษรก่อน แล้วจึงตัดด้วย … */
+function fitText(text, maxWidth, maxSize, minSize) {
+  const words = pieces(text, 'word');
+  for (let size = maxSize; ; size = Math.max(minSize, size - 0.5)) {
+    const lines = [''];
+    for (const word of words) {
+      const next = lines.at(-1) + word;
+      if (!lines.at(-1) || textWidth(next.trim(), size) <= maxWidth) lines[lines.length - 1] = next;
+      else lines.push(word);
+    }
+    const out = lines.map(l => l.trim()).filter(Boolean);
+    if (out.length <= 2 && out.every(l => textWidth(l, size) <= maxWidth)) return { size, lines: out };
+    if (size <= minSize) {
+      const cut = out.slice(0, 2);
+      const last = cut.length - 1;
+      let chars = pieces(cut[last], 'grapheme');
+      let more = out.length > 2;
+      while (chars.length && textWidth(chars.join('') + (more ? '…' : ''), size) > maxWidth) { chars.pop(); more = true; }
+      cut[last] = chars.join('') + (more ? '…' : '');
+      if (last && textWidth(cut[0], size) > maxWidth) {
+        const head = pieces(cut[0], 'grapheme');
+        while (head.length && textWidth(head.join('') + '…', size) > maxWidth) head.pop();
+        cut[0] = head.join('') + '…';
+      }
+      return { size, lines: cut };
+    }
+  }
+}
+
+/** หมายเลขโต๊ะ + คำอธิบาย + จำนวนคน จัดกึ่งกลางโต๊ะ */
+function tableText({ name, desc, w, h }, { total, checked }) {
+  const base = Math.min(w, h);
+  const note = desc ? fitText(desc, w * 0.84, Math.max(8, base * 0.15), Math.max(7, base * 0.115)) : null;
+  const rows = [
+    { text: name, size: Math.max(9, base * (note ? 0.22 : 0.25)), cls: 'tname' },
+    ...(note ? note.lines.map(text => ({ text, size: note.size, cls: 'tdesc' })) : []),
+    { text: `${checked}/${total}`, size: Math.max(7, base * (note ? 0.14 : 0.19)), cls: 'tcount' }
+  ];
+  let y = -rows.reduce((sum, r) => sum + r.size * 1.15, 0) / 2;
+  return rows.map(r => {
+    const mid = y + r.size * 0.575;
+    y += r.size * 1.15;
+    return `<text y="${mid.toFixed(1)}" font-size="${r.size.toFixed(1)}" class="${r.cls}">${esc(r.text)}</text>`;
+  }).join('');
+}
+
 /** จุดที่นั่งรอบโต๊ะ: เขียว = เช็คอินแล้ว, แดง = ยังไม่เช็คอิน, เทา = ที่ว่าง */
 function seatDots({ w, h, shape, seats }, { total, checked }) {
   const count = Math.min(60, Math.max(seats, total));
@@ -43,7 +93,7 @@ export function createFloor(host, opts) {
     const z = e.target.dataset.z;
     if (z === undefined) return;
     zoom = z === '0' ? 1 : Math.min(5, Math.max(1, zoom * (z === '1' ? 1.3 : 1 / 1.3)));
-    svg.style.width = zoom * 100 + '%';
+    svg.style.width = svg.style.height = zoom * 100 + '%';
   };
 
   function itemSvg(id, i, stats) {
@@ -59,9 +109,8 @@ export function createFloor(host, opts) {
       const s = stats.get(i.name) || { total: 0, checked: 0 };
       dots = seatDots(i, s);
       if (i.seats && s.total > i.seats) cls += ' over';
-      const fs = Math.max(9, Math.min(w, h) * 0.25);
-      text = `<text y="${-fs * 0.35}" font-size="${fs}" class="tname">${esc(i.name)}</text><text y="${fs * 0.85}" font-size="${fs * 0.75}">${s.checked}/${s.total}</text>`;
-      aria = `tabindex="0" role="button" aria-label="โต๊ะ ${esc(i.name)} เช็คอิน ${s.checked} จาก ${s.total} คน ว่าง ${Math.max(0, i.seats - s.total)} ที่"`;
+      text = tableText(i, s) + (i.desc ? `<title>${esc(i.desc)}</title>` : '');
+      aria = `tabindex="0" role="button" aria-label="โต๊ะ ${esc(i.name)} ${esc(i.desc)} เช็คอิน ${s.checked} จาก ${s.total} คน ว่าง ${Math.max(0, i.seats - s.total)} ที่"`;
     } else {
       const label = i.name || TYPES[i.type].label;
       const tall = i.type === 'aisle' && h > w * 1.5;
@@ -131,6 +180,8 @@ export function createFloor(host, opts) {
     svg.addEventListener('click', open);
     svg.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); } });
   }
+
+  document.fonts?.ready.then(() => svg.isConnected && render()); // วัดข้อความใหม่เมื่อฟอนต์โหลดเสร็จ
 
   return { render, select(id) { selected = id; render(); }, get selected() { return selected; } };
 }

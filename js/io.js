@@ -4,7 +4,7 @@ import { clean, norm, num, byGuest, byTable, normalizeGuest, normalizeItem, norm
 
 export const GUEST_HEADERS = ['ลำดับ', 'ชื่อสกุลไทย', 'ชื่อสกุลEng', 'ตำแหน่ง', 'ความสัมพันธ์', 'สถานะเช็คอิน', 'โต๊ะ'];
 const GUEST_KEYS = ['no', 'th', 'en', 'pos', 'rel', 'checked', 'table'];
-const LAYOUT_HEADERS = ['id', 'ประเภท', 'ชื่อ', 'X', 'Y', 'กว้าง', 'สูง', 'หมุน', 'รูปทรง', 'ที่นั่ง'];
+const LAYOUT_HEADERS = ['id', 'ประเภท', 'ชื่อ', 'คำอธิบาย', 'X', 'Y', 'กว้าง', 'สูง', 'หมุน', 'รูปทรง', 'ที่นั่ง'];
 export const CHECKED_TEXT = 'เช็คอินแล้ว', UNCHECKED_TEXT = 'ยังไม่เช็คอิน';
 
 const headerKey = s => norm(s).replace(/[\s\-_./]/g, '').replace(/เช็ก/g, 'เช็ค');
@@ -43,7 +43,7 @@ export function parseSheets(sheets) {
         if (label === 'ห้อง') { room = { w: get(r, 'กว้าง'), h: get(r, 'สูง') }; continue; }
         const type = Object.keys(TYPES).find(k => k === label.toLowerCase() || TYPES[k].label === label);
         if (!type) continue;
-        items.push({ id: get(r, 'id'), type, name: get(r, 'ชื่อ'), x: get(r, 'X'), y: get(r, 'Y'), w: get(r, 'กว้าง'), h: get(r, 'สูง'), rot: get(r, 'หมุน'), shape: ['rect', 'เหลี่ยม'].includes(get(r, 'รูปทรง')) ? 'rect' : 'round', seats: get(r, 'ที่นั่ง') });
+        items.push({ id: get(r, 'id'), type, name: get(r, 'ชื่อ'), desc: get(r, 'คำอธิบาย'), x: get(r, 'X'), y: get(r, 'Y'), w: get(r, 'กว้าง'), h: get(r, 'สูง'), rot: get(r, 'หมุน'), shape: ['rect', 'เหลี่ยม'].includes(get(r, 'รูปทรง')) ? 'rect' : 'round', seats: get(r, 'ที่นั่ง') });
       }
       result.layout = { room: normalizeRoom(room), items: toMap(items, normalizeItem, 'i') };
     }
@@ -103,10 +103,10 @@ export function toExcel(guests, room, items) {
   const guestRows = Object.values(guests).sort(byGuest).map(g => [asNum(g.no), g.th, g.en, g.pos, g.rel, g.checked ? CHECKED_TEXT : UNCHECKED_TEXT, asNum(g.table)]);
   const layoutRows = Object.entries(items)
     .sort(([, a], [, b]) => a.type.localeCompare(b.type) || byTable(a.name, b.name))
-    .map(([id, i]) => [id, TYPES[i.type].label, i.name, i.x, i.y, i.w, i.h, i.rot, i.shape === 'rect' ? 'เหลี่ยม' : 'กลม', i.seats]);
+    .map(([id, i]) => [id, TYPES[i.type].label, i.name, i.desc, i.x, i.y, i.w, i.h, i.rot, i.shape === 'rect' ? 'เหลี่ยม' : 'กลม', i.seats]);
   return writeXlsx([
     { name: 'รายชื่อแขก', rows: [GUEST_HEADERS, ...guestRows], widths: [8, 28, 28, 22, 18, 16, 8] },
-    { name: 'ผังโต๊ะ', rows: [LAYOUT_HEADERS, ['', 'ห้อง', '', '', '', room.w, room.h, '', '', ''], ...layoutRows], widths: [22, 10, 18, 8, 8, 8, 8, 8, 10, 8] }
+    { name: 'ผังโต๊ะ', rows: [LAYOUT_HEADERS, ['', 'ห้อง', '', '', '', '', room.w, room.h, '', '', ''], ...layoutRows], widths: [22, 10, 12, 28, 8, 8, 8, 8, 8, 10, 8] }
   ]);
 }
 

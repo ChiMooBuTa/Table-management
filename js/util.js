@@ -48,6 +48,7 @@ export function normalizeItem(i = {}) {
   const t = TYPES[type];
   return {
     type, name: type === 'table' ? tableName(i.name) : clean(i.name),
+    desc: type === 'table' ? clean(i.desc).slice(0, 80) : '',
     x: num(i.x, 100), y: num(i.y, 100),
     w: Math.max(20, num(i.w, t.w)), h: Math.max(20, num(i.h, t.h)),
     rot: ((num(i.rot) % 360) + 360) % 360,
