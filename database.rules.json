@@ -1,0 +1,35 @@
+{
+  "rules": {
+    "roles": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
+    },
+    "events": {
+      "$event": {
+        ".read": "auth != null && root.child('roles').child(auth.uid).exists()",
+        "layout": {
+          ".write": "auth != null && root.child('roles').child(auth.uid).val() === 'admin'"
+        },
+        "guests": {
+          ".write": "auth != null && root.child('roles').child(auth.uid).val() === 'admin'",
+          "$guest": {
+            "checked": {
+              ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'door') && (data.parent().child('th').exists() || data.parent().child('en').exists())",
+              ".validate": "newData.isBoolean()"
+            },
+            "checkedAt": {
+              ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'door') && (data.parent().child('th').exists() || data.parent().child('en').exists())",
+              ".validate": "newData.isNumber()"
+            },
+            "table": {
+              ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'door') && (data.parent().child('th').exists() || data.parent().child('en').exists())",
+              ".validate": "newData.isString() && newData.val().length <= 80"
+            }
+          }
+        }
+      }
+    }
+  }
+}

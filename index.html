@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>ระบบเช็คอินงานแต่ง</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><strong id="title"></strong><span id="status" class="status"></span></div>
+    <nav id="roles"></nav>
+    <div id="user"></div>
+  </header>
+  <div id="banner" hidden></div>
+  <div id="summary" class="summary" hidden></div>
+  <nav id="tabs" class="tabs"></nav>
+  <main id="main"><p class="note">กำลังโหลด…</p></main>
+  <dialog id="dialog"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
