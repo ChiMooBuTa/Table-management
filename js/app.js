@@ -239,8 +239,17 @@ function nextTableName(items) {
   let n = 1; while (used.has(String(n))) n++;
   return String(n);
 }
-function layoutView(el) {
-  el.innerHTML = `<div class="toolbar">${Object.entries(TYPES).map(([k, t]) => `<button data-add="${k}">+ ${t.label}</button>`).join('')}<button id="auto">สร้างโต๊ะจากรายชื่อ</button></div>
+// ผังของผู้ดูแลล็อกไว้ก่อน ต้องกด "แก้ไขผัง" จึงจะปรับได้
+let layoutEditing = false;
+function setLayoutEditing(on) { layoutEditing = on; build(); }
+function adminMapView(el) {
+  if (layoutEditing) return layoutEditor(el);
+  el.innerHTML = `<div class="toolbar"><button class="primary" id="edit">✎ แก้ไขผัง</button></div><div class="fill"></div>`;
+  $('#edit', el).onclick = () => setLayoutEditing(true);
+  return mapView($('.fill', el));
+}
+function layoutEditor(el) {
+  el.innerHTML = `<div class="toolbar"><button class="primary" id="done">✓ เสร็จสิ้น</button>${Object.entries(TYPES).map(([k, t]) => `<button data-add="${k}">+ ${t.label}</button>`).join('')}<button id="auto">สร้างโต๊ะจากรายชื่อ</button></div>
     <div class="editor"><div>${legend}<div id="map"></div><p class="muted">ลากเพื่อย้าย • ลากจุดกลมมุมขวาล่างเพื่อปรับขนาด • ปุ่มลูกศรเลื่อนทีละ 5 • บันทึกอัตโนมัติ</p><p id="orphans" class="orphans"></p></div><aside id="props"></aside></div>`;
   let shown;
   const floor = createFloor($('#map', el), {
@@ -301,6 +310,7 @@ function layoutView(el) {
       save({ [`layout/items/${id}`]: { ...base, ...freeSpot(db.items, base) } });
       floor.select(id); drawProps(id);
     }
+    if (e.target.id === 'done') return setLayoutEditing(false);
     if (e.target.id === 'auto') {
       const have = new Set(tables().map(([, i]) => i.name));
       const names = [...tableStats().keys()].filter(n => !have.has(n)).sort(byTable);
@@ -411,7 +421,7 @@ function confirmImport(result, fileName) {
 }
 
 /* ---------- โครงหน้า / สิทธิ์ ---------- */
-const VIEWS = { checkin: checkinView, list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: layoutView, data: dataView };
+const VIEWS = { checkin: checkinView, list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: adminMapView, data: dataView };
 
 function route() {
   const [p, t] = location.hash.slice(1).split('/');
@@ -419,6 +429,7 @@ function route() {
   page = Object.hasOwn(PAGES, p) ? p : fallback;
   tab = Object.hasOwn(PAGES[page].tabs, t) ? t : lastTab[page] || Object.keys(PAGES[page].tabs)[0];
   lastTab[page] = tab;
+  layoutEditing = false; // เปลี่ยนหน้าแล้วล็อกผังใหม่
   answer?.(false);
   if (!dialog.hidden) closeDialog();
   build();
