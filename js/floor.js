@@ -43,7 +43,7 @@ export function createFloor(host, opts) {
     const z = e.target.dataset.z;
     if (z === undefined) return;
     zoom = z === '0' ? 1 : Math.min(5, Math.max(1, zoom * (z === '1' ? 1.3 : 1 / 1.3)));
-    svg.style.width = zoom * 100 + '%';
+    svg.style.width = svg.style.height = zoom * 100 + '%';
   };
 
   function itemSvg(id, i, stats) {
