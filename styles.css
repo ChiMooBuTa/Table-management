@@ -109,7 +109,7 @@ body.fit .summary { padding:3px 12px 7px; font-size:.9rem; }
 body.fit .summary b { font-size:1rem; }
 body.fit .tabs a { padding:4px 14px; }
 body.fit main { flex:1; min-height:0; width:100%; max-width:none; margin:0; padding:6px 10px 8px; display:flex; flex-direction:column; }
-body.fit main > div, body.fit #map, body.fit .editor > div { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
+body.fit main > div, body.fit .fill, body.fit #map, body.fit .editor > div { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 body.fit .legend { margin:0 0 4px; font-size:.8rem; }
 body.fit .zoom { margin-bottom:4px; } body.fit .zoom button { padding:1px 12px; }
 body.fit .floor-scroll { flex:1; min-height:0; max-height:none; position:relative; }
