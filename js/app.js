@@ -1,11 +1,11 @@
-import { EVENT_NAME } from '../config.js';
+import { applyTheme, cacheTheme, cachedTheme, normalizeSettings, themeView, logoHtml } from './theme.js';
 import { store, isLocal } from './store.js';
 import { createFloor } from './floor.js';
 import { parseFile, buildGuests, toJson, toExcel, templateExcel, CHECKED_TEXT, UNCHECKED_TEXT, GIFT_TEXT, NO_GIFT_TEXT } from './io.js';
 import { $, esc, uid, num, clean, tableName, byTable, byGuest, matchScore, normalizeGuest, normalizeItem, normalizeRoom, TYPES } from './util.js';
 
 const PAGES = {
-  admin: { label: 'ผู้ดูแล', tabs: { checkin: 'เช็คอิน', layout: 'ผังโต๊ะ', guests: 'รายชื่อแขก', data: 'นำเข้า / ส่งออก' } },
+  admin: { label: 'ผู้ดูแล', tabs: { checkin: 'เช็คอิน', layout: 'ผังโต๊ะ', guests: 'รายชื่อแขก', data: 'นำเข้า / ส่งออก', theme: 'ธีมและโลโก้' } },
   door: { label: 'หน้าประตู', tabs: { checkin: 'เช็คอิน', map: 'ผังโต๊ะ' } },
   gift: { label: 'ของชำร่วย', tabs: { gift: 'มอบของชำร่วย', giftlist: 'รายการรับของ' } },
   viewer: { label: 'ดูข้อมูล', tabs: { list: 'รายชื่อแขก', map: 'ผังโต๊ะ' } }
@@ -13,14 +13,19 @@ const PAGES = {
 const ACCESS = { admin: ['admin', 'door', 'gift', 'viewer'], door: ['door', 'viewer'], gift: ['gift', 'viewer'], viewer: ['viewer'] };
 const LIMIT = 30;
 
-let user, authReady = false, db = { guests: {}, items: {}, room: normalizeRoom() };
+let user, authReady = false, db = { guests: {}, items: {}, room: normalizeRoom(), settings: cachedTheme() };
 let page = 'door', tab = '', view = null; // view = { update() }
 const lastTab = {};
 
 /* ---------- ข้อมูล ---------- */
 function onData(raw) {
   const map = (src, fn) => Object.fromEntries(Object.entries(src || {}).filter(([, v]) => v).map(([k, v]) => [k, fn(v)]));
-  db = { guests: map(raw.guests, normalizeGuest), items: map(raw.layout?.items, normalizeItem), room: normalizeRoom(raw.layout?.room) };
+  // ข้อมูลว่างทั้งหมด (เช่น ยังไม่เข้าสู่ระบบ) ให้คงธีมล่าสุดที่จำไว้
+  const loaded = Object.keys(raw).length > 0;
+  const settings = loaded ? normalizeSettings(raw.settings) : db.settings;
+  if (loaded) cacheTheme(settings);
+  db = { guests: map(raw.guests, normalizeGuest), items: map(raw.layout?.items, normalizeItem), room: normalizeRoom(raw.layout?.room), settings };
+  if (tab !== 'theme' || !view) applyTheme(settings); // หน้าตั้งค่าธีมจัดการตัวอย่างเอง
   refresh();
 }
 const guestList = () => Object.entries(db.guests).map(([id, g]) => ({ id, ...g })).sort(byGuest);
@@ -410,7 +415,7 @@ function download(content, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
-const exportJson = (prefix = 'wedding') => download(toJson(db.guests, db.room, db.items), `${prefix}-${stamp()}.json`);
+const exportJson = (prefix = 'wedding') => download(toJson(db.guests, db.room, db.items, db.settings), `${prefix}-${stamp()}.json`);
 
 function dataView(el) {
   el.innerHTML = `<div class="panels">
@@ -445,7 +450,8 @@ function dataView(el) {
 function confirmImport(result, fileName) {
   const guests = result.guests?.length ? result.guests : null;
   const layout = result.layout && Object.keys(result.layout.items).length ? result.layout : null;
-  if (!guests && !layout) return toast('ไม่พบข้อมูล ตรวจสอบว่ามีหัวคอลัมน์ “ชื่อสกุลไทย” หรือ “ชื่อสกุลEng”', true);
+  const settings = result.settings || null;
+  if (!guests && !layout && !settings) return toast('ไม่พบข้อมูล ตรวจสอบว่ามีหัวคอลัมน์ “ชื่อสกุลไทย” หรือ “ชื่อสกุลEng”', true);
   openDialog(() => `<form id="iform"><h2>ตรวจสอบก่อนนำเข้า</h2><p class="muted">${esc(fileName)}</p>
     ${guests ? `<fieldset><legend><label class="inline"><input type="checkbox" name="guests" checked> รายชื่อแขก ${guests.length} คน</label></legend>
       ${result.missing?.length ? `<p class="warn">ไม่พบคอลัมน์: ${esc(result.missing.join(', '))}</p>` : ''}
@@ -453,6 +459,7 @@ function confirmImport(result, fileName) {
       <label class="inline"><input type="radio" name="mode" value="replace"> แทนที่รายชื่อทั้งหมด</label>
       <div class="preview"><table>${guests.slice(0, 5).map(g => `<tr><td>${esc(g.no)}</td><td>${esc(g.th || g.en)}</td><td>โต๊ะ ${esc(g.table || '-')}</td></tr>`).join('')}</table></div></fieldset>` : ''}
     ${layout ? `<fieldset><legend><label class="inline"><input type="checkbox" name="layout" checked> ผังห้อง ${Object.keys(layout.items).length} ชิ้น (แทนที่ผังเดิม)</label></legend></fieldset>` : ''}
+    ${settings ? `<fieldset><legend><label class="inline"><input type="checkbox" name="theme" checked> ธีมสีและสัญลักษณ์งาน</label></legend></fieldset>` : ''}
     <label class="inline"><input type="checkbox" name="backup" checked> ดาวน์โหลดข้อมูลเดิมเก็บไว้ก่อน (.json)</label>
     <div class="row"><button class="primary">นำเข้า</button><button type="button" data-close>ยกเลิก</button></div></form>`);
   dialogRender = null;
@@ -471,6 +478,7 @@ function confirmImport(result, fileName) {
       done.push(`เพิ่ม ${r.added} อัปเดต ${r.updated} คน`);
     }
     if (layout && f.get('layout')) { patch.layout = layout; done.push('ผังห้อง'); }
+    if (settings && f.get('theme')) { patch.settings = settings; done.push('ธีม'); }
     closeDialog();
     if (Object.keys(patch).length) save(patch, 'นำเข้าแล้ว: ' + done.join(', '));
     else toast('ไม่มีข้อมูลที่เปลี่ยนแปลง');
@@ -478,7 +486,8 @@ function confirmImport(result, fileName) {
 }
 
 /* ---------- โครงหน้า / สิทธิ์ ---------- */
-const VIEWS = { checkin: el => checkinView(el), gift: el => checkinView(el, giftCard), giftlist: el => listView(el, false), list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: adminMapView, data: dataView };
+const VIEWS = { checkin: el => checkinView(el), gift: el => checkinView(el, giftCard), giftlist: el => listView(el, false), list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: adminMapView, data: dataView,
+  theme: el => themeView(el, { current: () => db.settings, onSave: s => save({ settings: s }, 'บันทึกธีมแล้ว'), toast }) };
 
 function route() {
   const [p, t] = location.hash.slice(1).split('/');
@@ -527,7 +536,7 @@ function refresh() {
 }
 
 function loginForm(main) {
-  main.innerHTML = `<form class="login"><h2>เข้าสู่ระบบ</h2><label>อีเมล<input name="email" type="email" required autocomplete="username"></label><label>รหัสผ่าน<input name="password" type="password" required autocomplete="current-password"></label><button class="primary big">เข้าสู่ระบบ</button></form>`;
+  main.innerHTML = `<form class="login">${logoHtml(db.settings, 'logo big')}<h2>เข้าสู่ระบบ</h2><label>อีเมล<input name="email" type="email" required autocomplete="username"></label><label>รหัสผ่าน<input name="password" type="password" required autocomplete="current-password"></label><button class="primary big">เข้าสู่ระบบ</button></form>`;
   $('form', main).onsubmit = async e => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -536,7 +545,7 @@ function loginForm(main) {
   };
 }
 
-$('#title').textContent = EVENT_NAME;
+applyTheme(db.settings);
 if (isLocal) { $('#banner').hidden = false; $('#banner').textContent = 'โหมดทดลอง: ข้อมูลเก็บในเครื่องนี้เท่านั้น ใส่ค่า Firebase ใน config.js เพื่อแชร์ข้ามเครื่อง'; }
 addEventListener('hashchange', route);
 route();

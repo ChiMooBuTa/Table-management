@@ -18,9 +18,29 @@
   <div id="banner" hidden></div>
   <div id="summary" class="summary" hidden></div>
   <nav id="tabs" class="tabs"></nav>
-  <main id="main"><p class="note">กำลังโหลด…</p></main>
-  <dialog id="dialog"></dialog>
+  <main id="main"><p class="note" id="loading">กำลังโหลด…</p></main>
   <div id="toast" role="status" aria-live="polite"></div>
+  <script>
+  // ถ้าเว็บค้างที่ "กำลังโหลด" ให้แสดงสาเหตุบนหน้าจอ
+  (function () {
+    var errors = [];
+    addEventListener('error', function (e) {
+      if (e.filename) errors.push(e.filename.split('/').slice(-2).join('/') + ' บรรทัด ' + e.lineno + ': ' + e.message);
+    }, true);
+    setTimeout(async function () {
+      if (!document.getElementById('loading')) return;
+      if (location.protocol === 'file:') errors.push('เปิดไฟล์จากในเครื่องโดยตรงไม่ได้ ให้เปิดผ่านลิงก์ GitHub Pages');
+      else for (const f of ['config.js', 'js/app.js', 'js/store.js', 'js/floor.js', 'js/io.js', 'js/xlsx.js', 'js/util.js', 'js/theme.js']) {
+        try { const r = await fetch(f, { cache: 'no-store' }); if (!r.ok) errors.push('ไม่พบไฟล์ ' + f + ' (' + r.status + ')'); }
+        catch (e) { errors.push('โหลดไฟล์ ' + f + ' ไม่ได้'); }
+      }
+      var box = document.getElementById('loading');
+      if (!box) return;
+      box.style.whiteSpace = 'pre-line';
+      box.textContent = 'เปิดระบบไม่สำเร็จ\n' + (errors.join('\n') || 'ไม่พบสาเหตุ ลองรีเฟรชหน้า');
+    }, 6000);
+  })();
+  </script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

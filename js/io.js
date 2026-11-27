@@ -1,5 +1,6 @@
 // นำเข้า/ส่งออก JSON และ Excel
 import { readXlsx, readCsv, writeXlsx } from './xlsx.js';
+import { normalizeSettings } from './theme.js';
 import { clean, norm, num, byGuest, byTable, normalizeGuest, normalizeItem, normalizeRoom, toMap, TYPES, uid } from './util.js';
 
 export const GUEST_HEADERS = ['ลำดับ', 'ชื่อสกุลไทย', 'ชื่อสกุลEng', 'ตำแหน่ง', 'ความสัมพันธ์', 'สถานะเช็คอิน', 'โต๊ะ', 'ของชำร่วย'];
@@ -68,6 +69,7 @@ export async function parseFile(file) {
     const result = {};
     if (data?.guests) result.guests = Object.values(toMap(data.guests, g => ({ ...normalizeGuest(g), status: typeof g.checked === 'boolean' ? g.checked : null }), 'g'));
     if (data?.layout) result.layout = { room: normalizeRoom(data.layout.room), items: toMap(data.layout.items, normalizeItem, 'i') };
+    if (data?.settings) result.settings = normalizeSettings(data.settings);
     if (result.guests) result.guests = result.guests.filter(g => g.th || g.en);
     return result;
   }
@@ -100,11 +102,12 @@ export function buildGuests(incoming, current, mode) {
   return { guests: out, added, updated };
 }
 
-export function toJson(guests, room, items) {
+export function toJson(guests, room, items, settings) {
   return JSON.stringify({
     version: 1, exportedAt: new Date().toISOString(),
     guests: Object.entries(guests).map(([id, g]) => ({ id, ...g })).sort(byGuest),
-    layout: { room, items: Object.entries(items).map(([id, i]) => ({ id, ...i })) }
+    layout: { room, items: Object.entries(items).map(([id, i]) => ({ id, ...i })) },
+    settings
   }, null, 2);
 }
 
