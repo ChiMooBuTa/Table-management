@@ -1,15 +1,16 @@
 import { EVENT_NAME } from '../config.js';
 import { store, isLocal } from './store.js';
 import { createFloor } from './floor.js';
-import { parseFile, buildGuests, toJson, toExcel, templateExcel, CHECKED_TEXT, UNCHECKED_TEXT } from './io.js';
+import { parseFile, buildGuests, toJson, toExcel, templateExcel, CHECKED_TEXT, UNCHECKED_TEXT, GIFT_TEXT, NO_GIFT_TEXT } from './io.js';
 import { $, esc, uid, num, clean, tableName, byTable, byGuest, matchScore, normalizeGuest, normalizeItem, normalizeRoom, TYPES } from './util.js';
 
 const PAGES = {
   admin: { label: 'ผู้ดูแล', tabs: { checkin: 'เช็คอิน', layout: 'ผังโต๊ะ', guests: 'รายชื่อแขก', data: 'นำเข้า / ส่งออก' } },
   door: { label: 'หน้าประตู', tabs: { checkin: 'เช็คอิน', map: 'ผังโต๊ะ' } },
+  gift: { label: 'ของชำร่วย', tabs: { gift: 'มอบของชำร่วย', giftlist: 'รายการรับของ' } },
   viewer: { label: 'ดูข้อมูล', tabs: { list: 'รายชื่อแขก', map: 'ผังโต๊ะ' } }
 };
-const ACCESS = { admin: ['admin', 'door', 'viewer'], door: ['door', 'viewer'], viewer: ['viewer'] };
+const ACCESS = { admin: ['admin', 'door', 'gift', 'viewer'], door: ['door', 'viewer'], gift: ['gift', 'viewer'], viewer: ['viewer'] };
 const LIMIT = 30;
 
 let user, authReady = false, db = { guests: {}, items: {}, room: normalizeRoom() };
@@ -86,7 +87,7 @@ function openDialog(render) {
 const closeDialog = () => { dialogRender = null; dialog.hidden = true; dialogBox.innerHTML = ''; };
 dialog.addEventListener('click', e => { if (e.target === dialog || e.target.closest('[data-close]')) closeDialog(); });
 
-const canCheck = () => page !== 'viewer';
+const canCheck = () => page === 'admin' || page === 'door';
 const badge = g => `<span class="badge ${g.checked ? 'yes' : ''}">${g.checked ? '✓ ' + CHECKED_TEXT : UNCHECKED_TEXT}</span>`;
 const timeText = t => (t ? new Date(t).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.' : '');
 const tableOptions = current => `<option value="">— ไม่ระบุ —</option>` + tableNames().map(n => {
@@ -126,9 +127,58 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => { if (e.target.dataset?.table !== undefined) setTable(e.target.dataset.table, e.target.value, e.target); });
 
+/* ---------- ของชำร่วย (หนึ่งคนต่อหนึ่งชิ้น) ---------- */
+let connection = '';
+const pendingGifts = new Set(); // รายการที่ยังรอฐานข้อมูลยืนยัน
+const giftBadge = g => `<span class="badge ${g.giftAt ? 'yes' : ''}">${g.giftAt ? '✓ ' + GIFT_TEXT : NO_GIFT_TEXT}</span>`;
+function giftCard(g) {
+  const pending = pendingGifts.has(g.id), done = !!g.giftAt && !pending;
+  return `<article class="card gift ${done ? 'in' : ''}">
+    <div class="who"><h3>${esc(g.th || g.en)}</h3>${g.th && g.en ? `<p class="en">${esc(g.en)}</p>` : ''}
+      <dl><div><dt>ตำแหน่ง</dt><dd>${esc(g.pos || '-')}</dd></div><div><dt>ความสัมพันธ์</dt><dd>${esc(g.rel || '-')}</dd></div></dl>
+      ${badge(g)}</div>
+    <div class="seat"><span>โต๊ะ</span><b>${esc(g.table || '-')}</b></div>
+    <div class="actions">${pending ? '<p class="giftstate wait">กำลังตรวจสอบ… ยังไม่ต้องมอบของ</p>'
+      : done ? `<p class="giftstate done">รับของชำร่วยแล้ว ${timeText(g.giftAt)} • ห้ามมอบซ้ำ</p>${user?.role === 'admin' ? `<button class="ghost" data-ungift="${esc(g.id)}">ยกเลิกการรับ</button>` : ''}`
+      : `<button class="primary big" data-gift="${esc(g.id)}">🎁 มอบของชำร่วย</button>`}</div>
+  </article>`;
+}
+async function giveGift(id) {
+  const g = db.guests[id];
+  if (!g || page === 'viewer' || pendingGifts.has(id)) return;
+  const name = g.th || g.en;
+  if (g.giftAt) return toast(`${name} รับของชำร่วยไปแล้ว`, true);
+  if (!await ask(`มอบของชำร่วย 1 ชิ้นให้ ${name} ?`, 'ยืนยันมอบ')) return;
+  if (connection === 'offline') return toast('ออฟไลน์อยู่ ตรวจสอบการรับซ้ำไม่ได้ กรุณารอให้ออนไลน์', true);
+  if (!db.guests[id] || db.guests[id].giftAt) return toast(`${name} รับของชำร่วยไปแล้ว ห้ามมอบซ้ำ`, true);
+  if (pendingGifts.has(id)) return;
+  pendingGifts.add(id);
+  try {
+    const saving = store.claimGift(id, Date.now());
+    view?.update();
+    await saving; // แจ้งให้มอบของหลังฐานข้อมูลตอบรับแล้วเท่านั้น
+    toast(`มอบของชำร่วยได้ • ${name}`);
+  } catch (e) {
+    toast(/permission/i.test(e.message) ? `ไม่สำเร็จ: ${name} อาจรับของไปแล้ว หรือบัญชีไม่มีสิทธิ์ ห้ามมอบ` : 'บันทึกไม่สำเร็จ ยังไม่ต้องมอบของ: ' + e.message, true);
+  } finally {
+    pendingGifts.delete(id);
+    refresh();
+  }
+}
+async function cancelGift(id) {
+  const g = db.guests[id];
+  if (!g || user?.role !== 'admin') return;
+  if (await ask(`ยกเลิกการรับของชำร่วยของ ${g.th || g.en} ?`, 'ยกเลิกการรับ', 'ปิด')) save({ [`guests/${id}/giftAt`]: null }, 'ยกเลิกการรับแล้ว');
+}
+document.addEventListener('click', e => {
+  const give = e.target.closest('[data-gift]'), cancel = e.target.closest('[data-ungift]');
+  if (give) giveGift(give.dataset.gift);
+  if (cancel) cancelGift(cancel.dataset.ungift);
+});
+
 /* ---------- เช็คอิน ---------- */
 let query = '';
-function checkinView(el) {
+function checkinView(el, card = guestCard) {
   el.innerHTML = `<div class="search"><input id="q" type="search" placeholder="พิมพ์คำขึ้นต้นชื่อหรือนามสกุล (ไทย / English)" autocomplete="off" aria-label="ค้นหาแขก" value="${esc(query)}"></div><div id="results" class="cards"></div>`;
   const input = $('#q', el);
   const update = () => {
@@ -136,7 +186,7 @@ function checkinView(el) {
     if (!clean(query)) { box.innerHTML = `<p class="note">${Object.keys(db.guests).length ? 'พิมพ์ชื่อแขกเพื่อค้นหา' : 'ยังไม่มีรายชื่อแขก ให้ผู้ดูแลนำเข้าไฟล์ Excel ก่อน'}</p>`; return; }
     const found = guestList().map(g => ({ g, s: matchScore(g, query) })).filter(x => x.s >= 0).sort((a, b) => a.s - b.s).map(x => x.g);
     box.innerHTML = found.length
-      ? found.slice(0, LIMIT).map(guestCard).join('') + (found.length > LIMIT ? `<p class="note">พบ ${found.length} คน แสดง ${LIMIT} คนแรก พิมพ์เพิ่มเพื่อจำกัดผล</p>` : '')
+      ? found.slice(0, LIMIT).map(card).join('') + (found.length > LIMIT ? `<p class="note">พบ ${found.length} คน แสดง ${LIMIT} คนแรก พิมพ์เพิ่มเพื่อจำกัดผล</p>` : '')
       : `<p class="note">ไม่พบชื่อที่ขึ้นต้นด้วย “${esc(query)}”</p>`;
   };
   input.oninput = () => { query = input.value; update(); };
@@ -145,21 +195,24 @@ function checkinView(el) {
 }
 
 /* ---------- รายชื่อ (viewer / admin) ---------- */
-const filters = { text: '', status: '' };
+const filters = { text: '', status: '', gift: '' };
 function listView(el, editable) {
   el.innerHTML = `<div class="toolbar"><input id="f" type="search" placeholder="กรองชื่อ ตำแหน่ง ความสัมพันธ์ โต๊ะ" value="${esc(filters.text)}" aria-label="กรองรายชื่อ">
     <select id="st" aria-label="สถานะ"><option value="">ทุกสถานะ</option><option value="1">${CHECKED_TEXT}</option><option value="0">${UNCHECKED_TEXT}</option></select>
+    <select id="gf" aria-label="ของชำร่วย"><option value="">ของชำร่วยทั้งหมด</option><option value="1">${GIFT_TEXT}</option><option value="0">${NO_GIFT_TEXT}</option></select>
     ${editable ? '<button class="primary" id="add">+ เพิ่มแขก</button>' : ''}</div><p id="count" class="muted"></p>
-    <div class="tablewrap"><table><thead><tr><th>ลำดับ</th><th>ชื่อสกุลไทย</th><th>ชื่อสกุล Eng</th><th>ตำแหน่ง</th><th>ความสัมพันธ์</th><th>สถานะเช็คอิน</th><th>โต๊ะ</th>${editable ? '<th></th>' : ''}</tr></thead><tbody></tbody></table></div>`;
+    <div class="tablewrap"><table><thead><tr><th>ลำดับ</th><th>ชื่อสกุลไทย</th><th>ชื่อสกุล Eng</th><th>ตำแหน่ง</th><th>ความสัมพันธ์</th><th>สถานะเช็คอิน</th><th>โต๊ะ</th><th>ของชำร่วย</th>${editable ? '<th></th>' : ''}</tr></thead><tbody></tbody></table></div>`;
   $('#st', el).value = filters.status;
+  $('#gf', el).value = filters.gift;
   const update = () => {
     const q = filters.text.toLowerCase().trim();
-    const rows = guestList().filter(g => (!filters.status || g.checked === (filters.status === '1')) && (!q || [g.th, g.en, g.pos, g.rel, g.table].some(v => v.toLowerCase().includes(q))));
+    const rows = guestList().filter(g => (!filters.status || g.checked === (filters.status === '1')) && (!filters.gift || !!g.giftAt === (filters.gift === '1')) && (!q || [g.th, g.en, g.pos, g.rel, g.table].some(v => v.toLowerCase().includes(q))));
     $('#count', el).textContent = `แสดง ${rows.length} จาก ${Object.keys(db.guests).length} คน`;
-    $('tbody', el).innerHTML = rows.map(g => `<tr><td data-l="ลำดับ">${esc(g.no)}</td><td data-l="ชื่อ" class="name">${esc(g.th)}</td><td data-l="Eng">${esc(g.en)}</td><td data-l="ตำแหน่ง">${esc(g.pos)}</td><td data-l="ความสัมพันธ์">${esc(g.rel)}</td><td data-l="สถานะ">${badge(g)}</td><td data-l="โต๊ะ">${esc(g.table || '-')}</td>${editable ? `<td><button class="ghost" data-edit="${esc(g.id)}">แก้ไข</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="8" class="note">ไม่มีรายชื่อ</td></tr>`;
+    $('tbody', el).innerHTML = rows.map(g => `<tr><td data-l="ลำดับ">${esc(g.no)}</td><td data-l="ชื่อ" class="name">${esc(g.th)}</td><td data-l="Eng">${esc(g.en)}</td><td data-l="ตำแหน่ง">${esc(g.pos)}</td><td data-l="ความสัมพันธ์">${esc(g.rel)}</td><td data-l="สถานะ">${badge(g)}</td><td data-l="โต๊ะ">${esc(g.table || '-')}</td><td data-l="ของชำร่วย">${giftBadge(g)} <small>${timeText(g.giftAt)}</small></td>${editable ? `<td><button class="ghost" data-edit="${esc(g.id)}">แก้ไข</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="9" class="note">ไม่มีรายชื่อ</td></tr>`;
   };
   $('#f', el).oninput = e => { filters.text = e.target.value; update(); };
   $('#st', el).onchange = e => { filters.status = e.target.value; update(); };
+  $('#gf', el).onchange = e => { filters.gift = e.target.value; update(); };
   if (editable) el.onclick = e => {
     if (e.target.id === 'add') editGuest(null);
     else if (e.target.dataset.edit) editGuest(e.target.dataset.edit);
@@ -172,13 +225,14 @@ function editGuest(id) {
   const field = (k, label) => `<label>${label}<input name="${k}" value="${esc(g[k])}" maxlength="200"></label>`;
   openDialog(() => `<form id="gform"><h2>${id ? 'แก้ไขข้อมูลแขก' : 'เพิ่มแขก'}</h2>${field('no', 'ลำดับ')}${field('th', 'ชื่อสกุลไทย')}${field('en', 'ชื่อสกุล Eng')}${field('pos', 'ตำแหน่ง')}${field('rel', 'ความสัมพันธ์')}${field('table', 'โต๊ะ')}
     <label class="inline"><input type="checkbox" name="checked" ${g.checked ? 'checked' : ''}> ${CHECKED_TEXT}</label>
+    <label class="inline"><input type="checkbox" name="gift" ${g.giftAt ? 'checked' : ''}> รับของชำร่วยแล้ว</label>
     <div class="row"><button class="primary">บันทึก</button><button type="button" data-close>ยกเลิก</button>${id ? '<button type="button" class="danger" id="del">ลบ</button>' : ''}</div></form>`);
   dialogRender = null; // ไม่ให้ข้อมูลที่ซิงก์มาเขียนทับฟอร์มระหว่างพิมพ์
   $('#gform').onsubmit = e => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
     const checked = !!data.checked, latest = id ? db.guests[id] : null;
-    const next = normalizeGuest({ ...data, checked, checkedAt: latest?.checkedAt || Date.now() });
+    const next = normalizeGuest({ ...data, checked, checkedAt: latest?.checkedAt || Date.now(), giftAt: data.gift ? latest?.giftAt || Date.now() : null });
     if (!next.th && !next.en) return toast('กรุณากรอกชื่ออย่างน้อยหนึ่งภาษา', true);
     if (!latest) save({ [`guests/${id || uid('g')}`]: next }, 'บันทึกแล้ว');
     else {
@@ -186,6 +240,7 @@ function editGuest(id) {
       const patch = {};
       for (const k of ['no', 'th', 'en', 'pos', 'rel', 'table', 'checked']) if (next[k] !== g[k]) patch[`guests/${id}/${k}`] = next[k];
       if (next.checked !== g.checked) patch[`guests/${id}/checkedAt`] = next.checkedAt;
+      if (!!next.giftAt !== !!g.giftAt) patch[`guests/${id}/giftAt`] = next.giftAt;
       if (Object.keys(patch).length) save(patch, 'บันทึกแล้ว');
     }
     closeDialog();
@@ -362,7 +417,7 @@ function dataView(el) {
     <section><h2>นำเข้าข้อมูล</h2><p>รองรับ .xlsx, .csv และ .json</p><p class="muted">หัวคอลัมน์: ลำดับ, ชื่อสกุลไทย, ชื่อสกุลEng, ตำแหน่ง, ความสัมพันธ์, สถานะเช็คอิน, โต๊ะ</p>
       <label class="filebtn">เลือกไฟล์<input id="file" type="file" accept=".xlsx,.csv,.json"></label><button id="tpl">ดาวน์โหลดไฟล์ตัวอย่าง</button></section>
     <section><h2>ส่งออกข้อมูล</h2><p>รวมรายชื่อ สถานะเช็คอิน และผังโต๊ะ</p><button class="primary" id="xlsx">ส่งออก Excel</button><button class="primary" id="json">ส่งออก JSON</button></section>
-    <section><h2>ล้างข้อมูล</h2><p class="muted">ระบบจะดาวน์โหลดไฟล์สำรอง .json ให้ก่อนลบ</p><button class="danger" data-clear="checks">รีเซ็ตสถานะเช็คอิน</button><button class="danger" data-clear="guests">ลบรายชื่อทั้งหมด</button><button class="danger" data-clear="layout">ลบผังทั้งหมด</button></section></div>`;
+    <section><h2>ล้างข้อมูล</h2><p class="muted">ระบบจะดาวน์โหลดไฟล์สำรอง .json ให้ก่อนลบ</p><button class="danger" data-clear="checks">รีเซ็ตสถานะเช็คอิน</button><button class="danger" data-clear="gifts">รีเซ็ตการรับของชำร่วย</button><button class="danger" data-clear="guests">ลบรายชื่อทั้งหมด</button><button class="danger" data-clear="layout">ลบผังทั้งหมด</button></section></div>`;
   $('#tpl', el).onclick = () => download(templateExcel(), 'guest-template.xlsx');
   $('#xlsx', el).onclick = () => download(toExcel(db.guests, db.room, db.items), `wedding-${stamp()}.xlsx`);
   $('#json', el).onclick = () => exportJson();
@@ -380,6 +435,8 @@ function dataView(el) {
       const patch = {};
       for (const id of Object.keys(db.guests)) { patch[`guests/${id}/checked`] = false; patch[`guests/${id}/checkedAt`] = null; }
       save(patch, 'รีเซ็ตแล้ว');
+    } else if (what === 'gifts') {
+      save(Object.fromEntries(Object.keys(db.guests).map(id => [`guests/${id}/giftAt`, null])), 'รีเซ็ตแล้ว');
     } else save({ [what]: null }, 'ลบแล้ว');
   };
   return { update() {} };
@@ -421,7 +478,7 @@ function confirmImport(result, fileName) {
 }
 
 /* ---------- โครงหน้า / สิทธิ์ ---------- */
-const VIEWS = { checkin: checkinView, list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: adminMapView, data: dataView };
+const VIEWS = { checkin: el => checkinView(el), gift: el => checkinView(el, giftCard), giftlist: el => listView(el, false), list: el => listView(el, false), guests: el => listView(el, true), map: mapView, layout: adminMapView, data: dataView };
 
 function route() {
   const [p, t] = location.hash.slice(1).split('/');
@@ -460,7 +517,8 @@ function build() {
 
 function refresh() {
   const all = Object.values(db.guests), checked = all.filter(g => g.checked).length;
-  $('#summary').innerHTML = `<span>แขกทั้งหมด <b>${all.length}</b></span><span class="ok">เช็คอินแล้ว <b>${checked}</b></span><span>ยังไม่มา <b>${all.length - checked}</b></span><i style="width:${all.length ? checked / all.length * 100 : 0}%"></i>`;
+  const given = all.filter(g => g.giftAt).length, gifting = page === 'gift';
+  $('#summary').innerHTML = gifting ? `<span>แขกทั้งหมด <b>${all.length}</b></span><span class="ok">รับของแล้ว <b>${given}</b></span><span>ยังไม่รับ <b>${all.length - given}</b></span><i style="width:${all.length ? given / all.length * 100 : 0}%"></i>` : `<span>แขกทั้งหมด <b>${all.length}</b></span><span class="ok">เช็คอินแล้ว <b>${checked}</b></span><span>ยังไม่มา <b>${all.length - checked}</b></span><i style="width:${all.length ? checked / all.length * 100 : 0}%"></i>`;
   // ไม่วาดทับขณะผู้ใช้กำลังเลือกโต๊ะ
   if (document.activeElement?.dataset?.table !== undefined) {
     document.activeElement.addEventListener('blur', () => setTimeout(() => view?.update()), { once: true });
@@ -486,10 +544,10 @@ store.init({
   onData,
   onAuth(next) {
     const same = authReady && user?.uid === next?.uid && user?.role === next?.role;
-    if (user && user.uid !== next?.uid) { query = ''; filters.text = filters.status = ''; $('#toast').textContent = ''; $('#toast').className = ''; answer?.(false); closeDialog(); }
+    if (user && user.uid !== next?.uid) { query = ''; filters.text = filters.status = filters.gift = ''; $('#toast').textContent = ''; $('#toast').className = ''; answer?.(false); closeDialog(); }
     user = next; authReady = true;
     if (!same) route();
   },
-  onStatus(s) { const el = $('#status'); el.className = 'status ' + s; el.textContent = { online: '● ออนไลน์', offline: '● ออฟไลน์ (อย่าปิดหน้าจนกว่าจะออนไลน์)', local: '● โหมดทดลอง' }[s]; },
+  onStatus(s) { connection = s; const el = $('#status'); el.className = 'status ' + s; el.textContent = { online: '● ออนไลน์', offline: '● ออฟไลน์ (อย่าปิดหน้าจนกว่าจะออนไลน์)', local: '● โหมดทดลอง' }[s]; },
   onError(e) { toast('อ่านข้อมูลไม่ได้: ' + e.message, true); }
 }).catch(e => { $('#main').innerHTML = `<p class="note">เชื่อมต่อ Firebase ไม่สำเร็จ: ${esc(e.message)}<br>ตรวจสอบ config.js และอินเทอร์เน็ต แล้วรีเฟรชหน้า</p>`; });

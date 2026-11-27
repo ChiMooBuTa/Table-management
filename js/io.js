@@ -2,10 +2,11 @@
 import { readXlsx, readCsv, writeXlsx } from './xlsx.js';
 import { clean, norm, num, byGuest, byTable, normalizeGuest, normalizeItem, normalizeRoom, toMap, TYPES, uid } from './util.js';
 
-export const GUEST_HEADERS = ['ลำดับ', 'ชื่อสกุลไทย', 'ชื่อสกุลEng', 'ตำแหน่ง', 'ความสัมพันธ์', 'สถานะเช็คอิน', 'โต๊ะ'];
-const GUEST_KEYS = ['no', 'th', 'en', 'pos', 'rel', 'checked', 'table'];
+export const GUEST_HEADERS = ['ลำดับ', 'ชื่อสกุลไทย', 'ชื่อสกุลEng', 'ตำแหน่ง', 'ความสัมพันธ์', 'สถานะเช็คอิน', 'โต๊ะ', 'ของชำร่วย'];
+const GUEST_KEYS = ['no', 'th', 'en', 'pos', 'rel', 'checked', 'table', 'gift'];
 const LAYOUT_HEADERS = ['id', 'ประเภท', 'ชื่อ', 'คำอธิบาย', 'X', 'Y', 'กว้าง', 'สูง', 'หมุน', 'รูปทรง', 'ที่นั่ง'];
 export const CHECKED_TEXT = 'เช็คอินแล้ว', UNCHECKED_TEXT = 'ยังไม่เช็คอิน';
+export const GIFT_TEXT = 'รับแล้ว', NO_GIFT_TEXT = 'ยังไม่รับ';
 
 const headerKey = s => norm(s).replace(/[\s\-_./]/g, '').replace(/เช็ก/g, 'เช็ค');
 
@@ -17,6 +18,13 @@ export function parseStatus(v) {
   return /^(เช็คอิน|มาแล้ว|แล้ว|yes|y|true|1|checked|✓|✔)/.test(s);
 }
 
+export function parseGift(v) {
+  const s = headerKey(v);
+  if (!s) return null;
+  if (/^(ยัง|ไม่|no|not|false|0|x|-)/.test(s)) return false;
+  return /^(รับ|แล้ว|yes|y|true|1|✓|✔)/.test(s);
+}
+
 export function parseSheets(sheets) {
   const result = {};
   for (const { rows } of sheets) {
@@ -25,11 +33,11 @@ export function parseSheets(sheets) {
     if (gi >= 0 && !result.guests) {
       const header = rows[gi].map(headerKey);
       const cols = GUEST_HEADERS.map(h => header.indexOf(headerKey(h)));
-      result.missing = GUEST_HEADERS.filter((_, i) => cols[i] < 0);
+      result.missing = GUEST_HEADERS.filter((_, i) => cols[i] < 0 && GUEST_KEYS[i] !== 'gift');
       result.guests = rows.slice(gi + 1).map(r => {
         const g = Object.fromEntries(GUEST_KEYS.map((k, i) => [k, cols[i] < 0 ? '' : clean(r[cols[i]])]));
         const status = parseStatus(g.checked);
-        return { ...normalizeGuest({ ...g, checked: status === true }), status };
+        return { ...normalizeGuest({ ...g, checked: status === true }), status, giftStatus: parseGift(g.gift) };
       }).filter(g => g.th || g.en);
       continue;
     }
@@ -73,7 +81,7 @@ const identity = g => `${norm(g.th)}|${norm(g.en)}`;
 export function buildGuests(incoming, current, mode) {
   const out = mode === 'merge' ? structuredClone(current) : {};
   const used = new Set(); let added = 0, updated = 0;
-  for (const { status, ...g } of incoming) {
+  for (const { status, giftStatus, ...g } of incoming) {
     let id = null;
     if (mode === 'merge') {
       const same = Object.keys(current).filter(k => !used.has(k) && identity(current[k]) === identity(g));
@@ -84,7 +92,9 @@ export function buildGuests(incoming, current, mode) {
     const checked = status ?? old?.checked ?? false;
     out[id] = normalizeGuest({
       ...g, table: g.table || old?.table || '', checked,
-      checkedAt: checked ? g.checkedAt || old?.checkedAt || Date.now() : null
+      checkedAt: checked ? g.checkedAt || old?.checkedAt || Date.now() : null,
+      // การรวมข้อมูลจะไม่ลบประวัติรับของชำร่วย เพื่อกันการรับซ้ำ
+      giftAt: old?.giftAt || g.giftAt || (giftStatus ? Date.now() : null)
     });
   }
   return { guests: out, added, updated };
@@ -100,19 +110,19 @@ export function toJson(guests, room, items) {
 
 export function toExcel(guests, room, items) {
   const asNum = v => (v !== '' && String(num(v, NaN)) === v ? +v : v);
-  const guestRows = Object.values(guests).sort(byGuest).map(g => [asNum(g.no), g.th, g.en, g.pos, g.rel, g.checked ? CHECKED_TEXT : UNCHECKED_TEXT, asNum(g.table)]);
+  const guestRows = Object.values(guests).sort(byGuest).map(g => [asNum(g.no), g.th, g.en, g.pos, g.rel, g.checked ? CHECKED_TEXT : UNCHECKED_TEXT, asNum(g.table), g.giftAt ? GIFT_TEXT : NO_GIFT_TEXT]);
   const layoutRows = Object.entries(items)
     .sort(([, a], [, b]) => a.type.localeCompare(b.type) || byTable(a.name, b.name))
     .map(([id, i]) => [id, TYPES[i.type].label, i.name, i.desc, i.x, i.y, i.w, i.h, i.rot, i.shape === 'rect' ? 'เหลี่ยม' : 'กลม', i.seats]);
   return writeXlsx([
-    { name: 'รายชื่อแขก', rows: [GUEST_HEADERS, ...guestRows], widths: [8, 28, 28, 22, 18, 16, 8] },
+    { name: 'รายชื่อแขก', rows: [GUEST_HEADERS, ...guestRows], widths: [8, 28, 28, 22, 18, 16, 8, 14] },
     { name: 'ผังโต๊ะ', rows: [LAYOUT_HEADERS, ['', 'ห้อง', '', '', '', '', room.w, room.h, '', '', ''], ...layoutRows], widths: [22, 10, 12, 28, 8, 8, 8, 8, 8, 10, 8] }
   ]);
 }
 
 export const templateExcel = () => writeXlsx([{
-  name: 'รายชื่อแขก', widths: [8, 28, 28, 22, 18, 16, 8],
+  name: 'รายชื่อแขก', widths: [8, 28, 28, 22, 18, 16, 8, 14],
   rows: [GUEST_HEADERS,
-    [1, 'นายสมชาย ใจดี', 'Mr. Somchai Jaidee', 'ผู้จัดการ', 'เพื่อนเจ้าบ่าว', UNCHECKED_TEXT, 1],
-    [2, 'นางสาวสมหญิง รักไทย', 'Ms. Somying Rakthai', 'ครู', 'ญาติเจ้าสาว', UNCHECKED_TEXT, 2]]
+    [1, 'นายสมชาย ใจดี', 'Mr. Somchai Jaidee', 'ผู้จัดการ', 'เพื่อนเจ้าบ่าว', UNCHECKED_TEXT, 1, NO_GIFT_TEXT],
+    [2, 'นางสาวสมหญิง รักไทย', 'Ms. Somying Rakthai', 'ครู', 'ญาติเจ้าสาว', UNCHECKED_TEXT, 2, NO_GIFT_TEXT]]
 }]);

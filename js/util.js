@@ -30,7 +30,8 @@ export function normalizeGuest(g = {}) {
   return {
     no: clean(g.no), th: clean(g.th), en: clean(g.en), pos: clean(g.pos), rel: clean(g.rel),
     checked: g.checked === true, checkedAt: g.checked === true ? num(g.checkedAt) || null : null,
-    table: tableName(g.table)
+    table: tableName(g.table),
+    giftAt: num(g.giftAt) > 0 ? num(g.giftAt) : null // เวลารับของชำร่วย (null = ยังไม่รับ)
   };
 }
 

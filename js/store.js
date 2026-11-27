@@ -27,6 +27,12 @@ function localStore() {
       catch { throw new Error('บันทึกในเบราว์เซอร์ไม่สำเร็จ (พื้นที่เต็มหรือถูกปิดกั้น)'); }
       finally { emit(); }
     },
+    async claimGift(id, time) {
+      data = read();
+      const guest = data.guests?.[id];
+      if (!guest || guest.giftAt) { emit(); throw new Error(guest ? 'permission: already claimed' : 'ไม่พบแขก'); }
+      await this.update({ [`guests/${id}/giftAt`]: time });
+    },
     async login() {}, async logout() {}
   };
 }
@@ -58,6 +64,8 @@ function firebaseStore() {
       });
     },
     update(patch) { return D.update(D.ref(db, `events/${EVENT_ID}`), patch); },
+    // Rules ของฐานข้อมูลจะปฏิเสธถ้าแขกคนนี้มีเวลารับของอยู่แล้ว
+    claimGift(id, time) { return this.update({ [`guests/${id}/giftAt`]: time }); },
     login(email, password) { return A.signInWithEmailAndPassword(auth, email, password); },
     logout() { return A.signOut(auth); }
   };
