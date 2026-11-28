@@ -2,7 +2,7 @@ import { applyTheme, cacheTheme, cachedTheme, normalizeSettings, themeView, logo
 import { store, isLocal } from './store.js';
 import { createFloor } from './floor.js';
 import { parseFile, buildGuests, toJson, toExcel, templateExcel, CHECKED_TEXT, UNCHECKED_TEXT, GIFT_TEXT, NO_GIFT_TEXT } from './io.js';
-import { $, esc, uid, num, clean, tableName, byTable, byGuest, matchScore, normalizeGuest, normalizeItem, normalizeRoom, TYPES } from './util.js';
+import { $, esc, uid, num, clean, tableName, byTable, byGuest, matchScore, norm, normalizeGuest, normalizeItem, normalizeRoom, TYPES } from './util.js';
 
 const PAGES = {
   admin: { label: 'ผู้ดูแล', tabs: { checkin: 'เช็คอิน', layout: 'ผังโต๊ะ', guests: 'รายชื่อแขก', data: 'นำเข้า / ส่งออก', theme: 'ธีมและโลโก้' } },
@@ -104,7 +104,7 @@ function guestCard(g) {
   return `<article class="card ${g.checked ? 'in' : ''}">
     <div class="who"><h3>${esc(g.th || g.en)}</h3>${g.th && g.en ? `<p class="en">${esc(g.en)}</p>` : ''}
       <dl><div><dt>ตำแหน่ง</dt><dd>${esc(g.pos || '-')}</dd></div><div><dt>ความสัมพันธ์</dt><dd>${esc(g.rel || '-')}</dd></div></dl>
-      ${badge(g)} <small>${g.checked ? timeText(g.checkedAt) : ''}</small></div>
+      ${badge(g)} <small>${g.checked ? timeText(g.checkedAt) : ''}</small>${walkBadge(g)}</div>
     <div class="seat"><span>โต๊ะ</span><b>${esc(g.table || '-')}</b>${tableDesc(g.table) ? `<small>${esc(tableDesc(g.table))}</small>` : ''}</div>
     ${canCheck() ? `<div class="actions">
       <button class="${g.checked ? 'ghost' : 'primary big'}" data-act="${g.checked ? 'uncheck' : 'check'}" data-id="${esc(g.id)}">${g.checked ? 'ยกเลิกเช็คอิน' : 'เช็คอิน'}</button>
@@ -135,13 +135,14 @@ document.addEventListener('change', e => { if (e.target.dataset?.table !== undef
 /* ---------- ของชำร่วย (หนึ่งคนต่อหนึ่งชิ้น) ---------- */
 let connection = '';
 const pendingGifts = new Set(); // รายการที่ยังรอฐานข้อมูลยืนยัน
+const walkBadge = g => (g.walkIn ? ' <span class="badge walk">เพิ่มหน้างาน</span>' : '');
 const giftBadge = g => `<span class="badge ${g.giftAt ? 'yes' : ''}">${g.giftAt ? '✓ ' + GIFT_TEXT : NO_GIFT_TEXT}</span>`;
 function giftCard(g) {
   const pending = pendingGifts.has(g.id), done = !!g.giftAt && !pending;
   return `<article class="card gift ${done ? 'in' : ''}">
     <div class="who"><h3>${esc(g.th || g.en)}</h3>${g.th && g.en ? `<p class="en">${esc(g.en)}</p>` : ''}
       <dl><div><dt>ตำแหน่ง</dt><dd>${esc(g.pos || '-')}</dd></div><div><dt>ความสัมพันธ์</dt><dd>${esc(g.rel || '-')}</dd></div></dl>
-      ${badge(g)}</div>
+      ${badge(g)}${walkBadge(g)}</div>
     <div class="seat"><span>โต๊ะ</span><b>${esc(g.table || '-')}</b></div>
     <div class="actions">${pending ? '<p class="giftstate wait">กำลังตรวจสอบ… ยังไม่ต้องมอบของ</p>'
       : done ? `<p class="giftstate done">รับของชำร่วยแล้ว ${timeText(g.giftAt)} • ห้ามมอบซ้ำ</p>${user?.role === 'admin' ? `<button class="ghost" data-ungift="${esc(g.id)}">ยกเลิกการรับ</button>` : ''}`
@@ -181,10 +182,53 @@ document.addEventListener('click', e => {
   if (cancel) cancelGift(cancel.dataset.ungift);
 });
 
+/* ---------- เพิ่มแขกหน้างาน (admin / door) ---------- */
+function addWalkIn(typed = '') {
+  if (!canCheck()) return;
+  const name = clean(typed), thai = /[\u0e00-\u0e7f]/.test(name);
+  const field = (k, label, v = '') => `<label>${label}<input name="${k}" value="${esc(v)}" maxlength="200" autocomplete="off"></label>`;
+  openDialog(() => `<form id="wform"><h2>เพิ่มแขกหน้างาน</h2><p class="muted">กรอกชื่ออย่างน้อยหนึ่งภาษา</p>
+    ${field('th', 'ชื่อสกุลไทย', thai ? name : '')}${field('en', 'ชื่อสกุล Eng', thai ? '' : name)}${field('pos', 'ตำแหน่ง')}${field('rel', 'ความสัมพันธ์')}
+    <label>โต๊ะ<select name="table">${tableOptions('')}</select></label>
+    <label class="inline"><input type="checkbox" name="checked" checked> เช็คอินทันที</label>
+    <div class="row"><button class="primary">เพิ่มแขก</button><button type="button" data-close>ยกเลิก</button></div></form>`);
+  dialogRender = null; // ไม่ให้ข้อมูลที่ซิงก์มาเขียนทับฟอร์มระหว่างพิมพ์
+  const form = $('#wform');
+  let busy = false;
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (busy) return;
+    const data = Object.fromEntries(new FormData(form)), checked = !!data.checked;
+    const guest = normalizeGuest({ ...data, checked, checkedAt: Date.now(), walkIn: true });
+    if (!guest.th && !guest.en) return toast('กรุณากรอกชื่ออย่างน้อยหนึ่งภาษา', true);
+    busy = true;
+    try {
+      const same = Object.values(db.guests).find(g => (guest.th && norm(g.th) === norm(guest.th)) || (guest.en && norm(g.en) === norm(guest.en)));
+      if (same && !await ask(`มีชื่อ ${same.th || same.en} อยู่แล้ว (โต๊ะ ${same.table || '-'}) ต้องการเพิ่มอีกคนหรือไม่?`, 'เพิ่มอีกคน')) return;
+      const seats = tables().find(([, i]) => i.name === guest.table)?.[1].seats;
+      if (seats && (tableStats().get(guest.table)?.total || 0) >= seats && !await ask(`โต๊ะ ${guest.table} มีแขกครบ ${seats} ที่นั่งแล้ว ต้องการเพิ่มเข้าโต๊ะนี้หรือไม่?`, 'เพิ่ม')) return;
+      if (!form.isConnected) return; // ฟอร์มถูกปิดไปแล้ว
+      guest.no = String(Math.floor(Math.max(0, ...Object.values(db.guests).map(g => num(g.no)))) + 1);
+      closeDialog();
+      query = guest.th || guest.en; // แสดงการ์ดของแขกที่เพิ่ม
+      const input = $('#q');
+      if (input) input.value = query;
+      save({ [`guests/${uid('g')}`]: guest }, `เพิ่ม ${query} แล้ว • โต๊ะ ${guest.table || '-'}`);
+      view?.update();
+    } finally { busy = false; }
+  };
+}
+
 /* ---------- เช็คอิน ---------- */
 let query = '';
 function checkinView(el, card = guestCard) {
-  el.innerHTML = `<div class="search"><input id="q" type="search" placeholder="พิมพ์คำขึ้นต้นชื่อหรือนามสกุล (ไทย / English)" autocomplete="off" aria-label="ค้นหาแขก" value="${esc(query)}"></div><div id="results" class="cards"></div>`;
+  el.innerHTML = `<div class="search"><input id="q" type="search" placeholder="พิมพ์คำขึ้นต้นชื่อหรือนามสกุล (ไทย / English)" autocomplete="off" aria-label="ค้นหาแขก" value="${esc(query)}">${card === guestCard ? '<button class="addguest" id="walkin">+ เพิ่มแขกหน้างาน</button>' : ''}</div><div id="results" class="cards"></div>`;
+  const walkin = $('#walkin', el);
+  if (walkin) walkin.onclick = () => {
+    // ถ้าค้นแล้วไม่พบ ให้นำคำค้นไปเติมเป็นชื่อ
+    const found = Object.values(db.guests).some(g => matchScore(g, query) >= 0);
+    addWalkIn(found ? '' : query);
+  };
   const input = $('#q', el);
   const update = () => {
     const box = $('#results', el);
@@ -213,7 +257,7 @@ function listView(el, editable) {
     const q = filters.text.toLowerCase().trim();
     const rows = guestList().filter(g => (!filters.status || g.checked === (filters.status === '1')) && (!filters.gift || !!g.giftAt === (filters.gift === '1')) && (!q || [g.th, g.en, g.pos, g.rel, g.table].some(v => v.toLowerCase().includes(q))));
     $('#count', el).textContent = `แสดง ${rows.length} จาก ${Object.keys(db.guests).length} คน`;
-    $('tbody', el).innerHTML = rows.map(g => `<tr><td data-l="ลำดับ">${esc(g.no)}</td><td data-l="ชื่อ" class="name">${esc(g.th)}</td><td data-l="Eng">${esc(g.en)}</td><td data-l="ตำแหน่ง">${esc(g.pos)}</td><td data-l="ความสัมพันธ์">${esc(g.rel)}</td><td data-l="สถานะ">${badge(g)}</td><td data-l="โต๊ะ">${esc(g.table || '-')}</td><td data-l="ของชำร่วย">${giftBadge(g)} <small>${timeText(g.giftAt)}</small></td>${editable ? `<td><button class="ghost" data-edit="${esc(g.id)}">แก้ไข</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="9" class="note">ไม่มีรายชื่อ</td></tr>`;
+    $('tbody', el).innerHTML = rows.map(g => `<tr><td data-l="ลำดับ">${esc(g.no)}</td><td data-l="ชื่อ" class="name">${esc(g.th)}${walkBadge(g)}</td><td data-l="Eng">${esc(g.en)}</td><td data-l="ตำแหน่ง">${esc(g.pos)}</td><td data-l="ความสัมพันธ์">${esc(g.rel)}</td><td data-l="สถานะ">${badge(g)}</td><td data-l="โต๊ะ">${esc(g.table || '-')}</td><td data-l="ของชำร่วย">${giftBadge(g)} <small>${timeText(g.giftAt)}</small></td>${editable ? `<td><button class="ghost" data-edit="${esc(g.id)}">แก้ไข</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="9" class="note">ไม่มีรายชื่อ</td></tr>`;
   };
   $('#f', el).oninput = e => { filters.text = e.target.value; update(); };
   $('#st', el).onchange = e => { filters.status = e.target.value; update(); };

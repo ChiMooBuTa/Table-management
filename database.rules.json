@@ -15,6 +15,7 @@
         "guests": {
           ".write": "auth != null && root.child('roles').child(auth.uid).val() === 'admin'",
           "$guest": {
+            ".write": "auth != null && root.child('roles').child(auth.uid).val() === 'door' && !data.exists() && newData.child('walkIn').val() === true && newData.child('th').isString() && newData.child('en').isString() && (newData.child('th').val() !== '' || newData.child('en').val() !== '') && !newData.child('giftAt').exists()",
             "checked": {
               ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'door') && (data.parent().child('th').exists() || data.parent().child('en').exists())",
               ".validate": "newData.isBoolean()"
@@ -26,8 +27,15 @@
             "table": {
               ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'door') && (data.parent().child('th').exists() || data.parent().child('en').exists())",
               ".validate": "newData.isString() && newData.val().length <= 80"
+            },
+            "giftAt": {
+              ".write": "auth != null && (root.child('roles').child(auth.uid).val() === 'admin' || root.child('roles').child(auth.uid).val() === 'gift') && !data.exists() && newData.exists() && (data.parent().child('th').exists() || data.parent().child('en').exists())",
+              ".validate": "newData.isNumber() && (!data.exists() || newData.val() === data.val())"
             }
           }
+        },
+        "settings": {
+          ".write": "auth != null && root.child('roles').child(auth.uid).val() === 'admin'"
         }
       }
     }

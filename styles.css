@@ -151,3 +151,7 @@ body.fit .logo { height:28px; min-width:28px; font-size:1rem; }
 .presets { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; } .panels .presets button { margin:0; }
 .presets i { display:inline-block; width:14px; height:14px; border-radius:50%; border:1px solid #0003; margin-right:-4px; vertical-align:-2px; }
 .colors { display:flex; gap:14px; flex-wrap:wrap; } .colors input[type=color] { width:76px !important; height:44px; padding:3px !important; cursor:pointer; }
+
+/* แขกหน้างาน */
+.search .addguest { display:block; width:100%; margin-top:8px; padding:10px; border:1px dashed var(--brand-ink); color:var(--brand-ink); font-weight:600; }
+.badge.walk { background:var(--some); color:#5a3b00; }
